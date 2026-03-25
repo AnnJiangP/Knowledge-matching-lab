@@ -1,0 +1,7 @@
+{
+  "name": "PrivacyData Vault",
+  "description": "A centralized knowledge base and AI assistant for data privacy scientists to manage, search, and query historical risk assessment data and statistics.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
