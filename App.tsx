@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ViewType, DataEntry } from './types';
 import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
@@ -10,22 +10,43 @@ import SmartExtraction from './components/SmartExtraction';
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [knowledgeBase, setKnowledgeBase] = useState<DataEntry[]>([]);
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
+  const isInitialMount = useRef(true);
+  const isDataLoaded = useRef(false);
 
-  // Load from LocalStorage
+  // Load from LocalStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem('privacy_vault_db');
+    const savedTime = localStorage.getItem('privacy_vault_last_saved');
+    
     if (saved) {
       try {
-        setKnowledgeBase(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setKnowledgeBase(parsed);
+          setLastSaved(savedTime);
+        }
       } catch (e) {
         console.error("Failed to parse saved data", e);
       }
     }
+    isDataLoaded.current = true;
   }, []);
 
-  // Save to LocalStorage
+  // Save to LocalStorage whenever knowledgeBase changes
   useEffect(() => {
+    // Skip saving on the very first mount or before loading is complete
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    if (!isDataLoaded.current) return;
+
     localStorage.setItem('privacy_vault_db', JSON.stringify(knowledgeBase));
+    const now = new Date().toLocaleTimeString();
+    localStorage.setItem('privacy_vault_last_saved', now);
+    setLastSaved(now);
   }, [knowledgeBase]);
 
   const addEntry = (entry: Omit<DataEntry, 'id' | 'dateAdded'>) => {
@@ -55,7 +76,33 @@ const App: React.FC = () => {
   };
 
   const handleImport = (data: DataEntry[]) => {
-    setKnowledgeBase(data);
+    setKnowledgeBase(prev => {
+      const existingIds = new Set(prev.map(e => e.id));
+      const newEntries = data.filter(e => !existingIds.has(e.id));
+      
+      // Also check for duplicate content to avoid double-adding if IDs were re-generated
+      const uniqueNewEntries = newEntries.filter(newEntry => 
+        !prev.some(oldEntry => 
+          oldEntry.topic === newEntry.topic && 
+          oldEntry.value === newEntry.value && 
+          oldEntry.country === newEntry.country &&
+          oldEntry.year === newEntry.year
+        )
+      );
+
+      if (uniqueNewEntries.length === 0 && data.length > 0) {
+        alert("Wait! These items are already in your Matching Lab.");
+        return prev;
+      }
+
+      if (uniqueNewEntries.length < data.length) {
+        alert(`Merged data: Added ${uniqueNewEntries.length} new items, skipped ${data.length - uniqueNewEntries.length} duplicates.`);
+      } else {
+        alert(`Successfully imported ${uniqueNewEntries.length} new items!`);
+      }
+
+      return [...prev, ...uniqueNewEntries];
+    });
   };
 
   const renderContent = () => {
@@ -83,7 +130,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex bg-[#f8fafc]">
-      <Sidebar currentView={currentView} setView={setCurrentView} />
+      <Sidebar currentView={currentView} setView={setCurrentView} lastSaved={lastSaved} />
       
       <main className="flex-1 ml-64 p-8">
         <header className="mb-8 flex justify-between items-center">

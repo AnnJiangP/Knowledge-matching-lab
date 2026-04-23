@@ -1,6 +1,21 @@
 
 import React, { useState } from 'react';
 import { DataEntry } from '../types';
+import * as XLSX from 'xlsx';
+import { 
+  Download, 
+  Upload, 
+  Plus, 
+  Search, 
+  Edit2, 
+  Trash2, 
+  X, 
+  Database,
+  AlertCircle,
+  FileJson,
+  FileSpreadsheet,
+  ChevronDown
+} from 'lucide-react';
 
 interface KnowledgeBaseProps {
   entries: DataEntry[];
@@ -15,6 +30,7 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
   const [entryToDelete, setEntryToDelete] = useState<DataEntry | null>(null);
   const [editingEntry, setEditingEntry] = useState<DataEntry | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [formData, setFormData] = useState({
     topic: '', value: '', unit: '', country: '', year: '', source: '', category: 'Epidemiology' as any, reportId: '', notes: ''
   });
@@ -65,7 +81,7 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
     }
   };
 
-  const handleExport = () => {
+  const handleExportJSON = () => {
     const dataStr = JSON.stringify(entries, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(dataBlob);
@@ -75,61 +91,143 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setShowExportMenu(false);
+  };
+
+  const handleExportExcel = () => {
+    const worksheet = XLSX.utils.json_to_sheet(entries);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "PrivacyVault_Data");
+    XLSX.writeFile(workbook, `privacy-vault-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    setShowExportMenu(false);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const json = JSON.parse(event.target?.result as string);
-        if (Array.isArray(json)) {
-          onImport(json);
-        } else {
-          alert("Invalid format: expected a JSON array of entries.");
+    const fileExt = file.name.split('.').pop()?.toLowerCase();
+
+    if (fileExt === 'json') {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const json = JSON.parse(event.target?.result as string);
+          if (Array.isArray(json)) {
+            onImport(json);
+          } else {
+            alert("Invalid JSON format: expected a array of entries.");
+          }
+        } catch (err) {
+          alert("Error parsing JSON file.");
         }
-      } catch (err) {
-        alert("Error parsing JSON file.");
-      }
-    };
-    reader.readAsText(file);
+      };
+      reader.readAsText(file);
+    } else if (fileExt === 'xlsx' || fileExt === 'xls') {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = new Uint8Array(event.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const json = XLSX.utils.sheet_to_json(worksheet) as any[];
+          
+          // Map fields if headers are different or just trust the keys match types.ts
+          // For safety, we can sanitize the imported objects
+          const sanitized = json.map(item => ({
+            id: item.id ? String(item.id) : Math.random().toString(36).substring(2, 9),
+            topic: String(item.topic || item.Topic || ''),
+            value: String(item.value || item.Value || ''),
+            unit: String(item.unit || item.Unit || ''),
+            country: String(item.country || item.Country || ''),
+            year: String(item.year || item.Year || ''),
+            source: String(item.source || item.Source || ''),
+            category: (['Epidemiology', 'Privacy Metrics', 'Demographics', 'Other'].includes(item.category || item.Category) ? (item.category || item.Category) : 'Other') as any,
+            reportId: String(item.reportId || item.ReportID || item['Report ID'] || ''),
+            notes: String(item.notes || item.Notes || ''),
+            dateAdded: item.dateAdded || item.DateAdded || new Date().toISOString()
+          }));
+
+          // Basic validation: Must have topic and value
+          const valid = sanitized.filter(e => e.topic.trim() && e.value.trim());
+          
+          if (valid.length === 0) {
+            alert("Oops! I couldn't find any valid data in that file. Please make sure the Excel columns match the Lab (Topic, Value, etc.).");
+            return;
+          }
+          
+          onImport(valid);
+        } catch (err) {
+          alert("Error parsing Excel file. The format might be incorrect.");
+          console.error(err);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      alert("Unsupported file format. Please upload JSON or Excel (.xlsx, .xls) files.");
+    }
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Knowledge Matching Lab</h2>
           <p className="text-slate-500">Manage your historical citations and research data points.</p>
         </div>
-        <div className="flex gap-3">
-          <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg cursor-pointer transition flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-            Import JSON
-            <input type="file" className="hidden" accept=".json" onChange={handleFileUpload} />
+        <div className="flex flex-wrap gap-2 relative">
+          <label className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg cursor-pointer transition flex items-center gap-2 text-sm font-medium shadow-sm">
+            <Upload className="w-4 h-4" />
+            Import (JSON/Excel)
+            <input type="file" className="hidden" accept=".json,.xlsx,.xls" onChange={handleFileUpload} />
           </label>
-          <button 
-            onClick={handleExport}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg transition flex items-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            Export
-          </button>
+          
+          <div className="relative">
+            <button 
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg transition flex items-center gap-2 text-sm font-medium shadow-sm"
+            >
+              <Download className="w-4 h-4" />
+              Download
+              <ChevronDown className={`w-4 h-4 transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {showExportMenu && (
+              <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                <button 
+                  onClick={handleExportExcel}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50 transition text-slate-700"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                  <span>Excel (.xlsx)</span>
+                </button>
+                <button 
+                  onClick={handleExportJSON}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm hover:bg-slate-50 transition text-slate-700 border-t border-slate-100"
+                >
+                  <FileJson className="w-4 h-4 text-orange-600" />
+                  <span>JSON (Backup)</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           <button 
             onClick={openAddModal}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-md transition flex items-center gap-2"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-md transition flex items-center gap-2 text-sm font-bold"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
+            <Plus className="w-4 h-4" />
             New Entry
           </button>
+        </div>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-100 p-4 rounded-xl flex items-start gap-3">
+        <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5" />
+        <div className="text-sm text-blue-800">
+          <p className="font-bold">Automatic Synchronization Enabled</p>
+          <p className="opacity-80">All entries are automatically saved to your browser's local storage. For extra safety, use the <strong>Download Backup</strong> button to save a copy to your computer.</p>
         </div>
       </div>
 
@@ -137,9 +235,7 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
         <div className="p-4 border-b border-slate-200 bg-slate-50/50">
           <div className="relative">
             <span className="absolute inset-y-0 left-0 flex items-center pl-3">
-              <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
+              <Search className="w-5 h-5 text-slate-400" />
             </span>
             <input
               type="text"
@@ -153,15 +249,15 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
 
         <div className="overflow-x-auto">
           <table className="w-full text-left">
-            <thead className="text-xs text-slate-500 uppercase bg-slate-50 font-semibold">
+            <thead className="text-xs text-slate-500 uppercase bg-slate-100 font-bold">
               <tr>
-                <th className="px-6 py-3 font-bold">Topic / Keyword</th>
-                <th className="px-6 py-3 font-bold text-center">Report ID</th>
-                <th className="px-6 py-3 font-bold">Value</th>
-                <th className="px-6 py-3 font-bold">Country</th>
-                <th className="px-6 py-3 font-bold">Year</th>
-                <th className="px-6 py-3 font-bold">Source</th>
-                <th className="px-6 py-3 font-bold">Actions</th>
+                <th className="px-6 py-4">Topic / Keyword</th>
+                <th className="px-6 py-4 text-center">Report ID</th>
+                <th className="px-6 py-4">Value</th>
+                <th className="px-6 py-4">Country</th>
+                <th className="px-6 py-4">Year</th>
+                <th className="px-6 py-4">Source</th>
+                <th className="px-6 py-4">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -170,7 +266,7 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
                   <td className="px-6 py-4">
                     <div>
                       <div className="font-semibold text-slate-800">{entry.topic}</div>
-                      <div className="text-xs text-slate-400">{entry.category}</div>
+                      <div className="text-[10px] text-slate-400 uppercase font-bold tracking-tight">{entry.category}</div>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-center">
@@ -189,7 +285,7 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
                   </td>
                   <td className="px-6 py-4 text-slate-600 font-medium">{entry.country}</td>
                   <td className="px-6 py-4 text-slate-600 font-medium">{entry.year}</td>
-                  <td className="px-6 py-4 text-slate-600 max-w-xs truncate">{entry.source}</td>
+                  <td className="px-6 py-4 text-slate-600 max-w-xs truncate text-xs">{entry.source}</td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
                       <button 
@@ -197,18 +293,14 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
                         className="p-2 bg-white border border-slate-200 rounded-lg shadow-sm text-slate-500 hover:text-blue-600 hover:border-blue-200 transition"
                         title="Edit Entry"
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                        </svg>
+                        <Edit2 className="w-4 h-4" />
                       </button>
                       <button 
                         onClick={() => setEntryToDelete(entry)}
                         className="p-2 bg-white border border-slate-200 rounded-lg shadow-sm text-slate-500 hover:text-red-600 hover:border-red-200 transition"
                         title="Delete Entry"
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </td>
@@ -216,6 +308,7 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
               )) : (
                 <tr>
                   <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
+                    <Database className="w-8 h-8 mx-auto mb-2 opacity-20" />
                     No data entries found. Start by adding one or importing a file.
                   </td>
                 </tr>
@@ -232,18 +325,14 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <div className="flex items-center gap-3">
                 <div className={`p-2 rounded-lg ${editingEntry ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={editingEntry ? "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5" : "M12 4v16m8-8H4"} />
-                  </svg>
+                  {editingEntry ? <Edit2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
                 </div>
                 <h3 className="text-xl font-bold text-slate-800">
                   {editingEntry ? 'Edit Citation Entry' : 'New Citation Entry'}
                 </h3>
               </div>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 transition">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <X className="w-6 h-6" />
               </button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -316,9 +405,7 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ entries, onAddEntry, onUp
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6 text-center">
               <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
+                <Trash2 className="w-8 h-8" />
               </div>
               <h3 className="text-xl font-bold text-slate-800 mb-2">Delete Citation?</h3>
               <p className="text-slate-500 text-sm mb-6">
